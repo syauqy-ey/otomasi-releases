@@ -14,7 +14,9 @@ Paket Mac belum ditandatangani dengan Apple Developer ID atau dinotariskan. Jika
 
 ## Pembaruan
 
-Aplikasi memeriksa rilis baru dan menyediakan tombol **Cek pembaruan** / **Update**. Satu rilis memuat paket Windows dan Mac dari revisi source yang sama. Aplikasi memilih paket yang sesuai dan memeriksa tanda tangan, ukuran, serta checksum sebelum memasang. Pemasangan dilakukan saat tidak ada pekerjaan berjalan.
+Aplikasi memeriksa rilis baru dan menyediakan tombol **Cek pembaruan** / **Update**. Satu rilis memuat paket Windows dan Mac dari revisi source yang sama. Aplikasi memilih paket yang sesuai dan memeriksa tanda tangan, ukuran, serta checksum sebelum memasang. Mulai versi 2.2.1, unduhan yang sudah siap membiarkan aplikasi tetap terbuka dan bisa digunakan. Selesaikan pekerjaan lalu tutup Otomasi sendiri untuk memasang update. Setelah pemasangan berhasil atau versi lama dipulihkan, aplikasi tetap tertutup sampai Anda membukanya sendiri.
+
+Untuk beralih dari versi 2.2.0 tanpa penutupan/pembukaan otomatis oleh updater lama, unduh paket 2.2.1 secara manual, tutup Otomasi sendiri, lalu ganti aplikasinya. Di Mac, ganti `Otomasi.app` di `~/Applications`; input dan pengaturan tetap berada di folder terpisah.
 
 Input, folder hasil, pengaturan, dan koneksi VPN tetap dipilih pada masing-masing komputer. Siapkan VPN sebelum pemeriksaan SSH.
 
