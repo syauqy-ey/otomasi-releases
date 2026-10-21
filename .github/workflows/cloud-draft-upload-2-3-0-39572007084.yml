@@ -1,0 +1,325 @@
+name: Stage verified Otomasi ZIPs in existing draft
+on:
+  workflow_dispatch:
+    inputs:
+      transfer_nonce:
+        description: One-use nonce matching the short-lived encrypted transfer secret
+        type: string
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: one-use-otomasi-draft-419342736
+  cancel-in-progress: false
+jobs:
+  upload:
+    if: github.repository == 'syauqy-ey/otomasi-releases' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download both verified binary artifacts and stage ZIPs only
+        shell: python
+        env:
+          OTOMASI_TRANSFER: ${{ secrets.OTOMASI_TRANSFER_39572007084 }}
+          TRANSFER_NONCE: ${{ inputs.transfer_nonce }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          """One-use public infrastructure only: upload two verified ZIPs to an existing draft.
+          
+          No application source, private repository token, private signing key, publication,
+          deletion, overwrite, checkout, dependencies, or automatic retry are involved.
+          """
+          from __future__ import annotations
+          from concurrent.futures import ThreadPoolExecutor
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import stat
+          import sys
+          import tempfile
+          import time
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import quote, urljoin, urlsplit
+          from urllib.request import Request, HTTPRedirectHandler, build_opener
+          import zipfile
+          
+          CONTRACT = json.loads('{"draft_id":419342736,"manifest":{"name":"latest.json","sha256":"922d8742d0842fa45ab11db8d23e4b56ee9944db9ce6a497c0d80f671cede037","size":1204},"platforms":{"macos-arm64":{"artifact_id":12332262994,"artifact_sha256":"1dcf3b54d7aec733345eb279507574bdf6585b0649ea70470a68deaaeace04b1","artifact_size":52877798,"metadata_sha256":"19113a0288cdc98bca69c51e7956a696461a574a3fb13f1f7339133e5a4925bf","name":"Automation-2.3.0-macos-arm64.zip","sha256":"c154b64952e098a5b3de8258bb5f0770dc5c91b273235429c59341de71821b8b","size":52876938},"windows-x86_64":{"artifact_id":12332437937,"artifact_sha256":"dcc0526a96414cf69389d1daaeadbafb68fa08e86db7f2bd47043ae815ac2afa","artifact_size":62811290,"metadata_sha256":"beca82b4cad601ef31b7dacb7b79a5d12261d772fafd89185a18019490359296","name":"Automation-2.3.0-windows-x86_64.zip","sha256":"f11ca1fd59fd5c2c1bad919005645bffe28f2b159c6c4c13406725a0902f7dcf","size":62810390}},"repository":"syauqy-ey/otomasi-releases","revision":"a2924460d8920732f210ac31a3927a8bb105ab29","schema":1,"source_run":39572007084,"version":"2.3.0"}')
+          API = "https://api.github.com/repos/" + CONTRACT["repository"]
+          UPLOAD = "https://uploads.github.com/repos/" + CONTRACT["repository"]
+          BLOCK = 256 * 1024
+          MAX_JSON = 2 * 1024 * 1024
+          TOTAL_TIMEOUT = 8 * 60
+          
+          
+          class TransferError(RuntimeError):
+              pass
+          
+          
+          def need(condition, message):
+              if not condition:
+                  raise TransferError(message)
+          
+          
+          def emit(event, **fields):
+              print(json.dumps({"event": event, **fields}, ensure_ascii=True), flush=True)
+          
+          
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, request, response, code, message, headers, new_url):
+                  return None
+          
+          
+          def storage_url(url):
+              try:
+                  parts = urlsplit(url)
+                  host = parts.hostname or ""
+                  valid = (parts.scheme == "https" and parts.port in (None, 443)
+                           and not parts.username and not parts.password and not parts.fragment
+                           and not any(ord(c) < 32 for c in url)
+                           and any(host.endswith(suffix) for suffix in (".blob.core.windows.net", ".githubusercontent.com")))
+              except (TypeError, ValueError):
+                  valid = False
+              need(valid, "Unapproved artifact storage URL; URL details suppressed.")
+              return url
+          
+          
+          def validate_secret(raw, nonce, contract):
+              value = json.loads(raw)
+              now = time.time()
+              need(value.get("schema") == 1 and re.fullmatch(r"[a-f0-9]{32}", nonce or "") is not None
+                   and value.get("nonce") == nonce, "Transfer nonce/schema mismatch.")
+              issued, expires = value.get("issued_at"), value.get("expires_at")
+              need(type(issued) in (int, float) and type(expires) in (int, float)
+                   and issued <= now + 5 and issued < expires <= issued + 120 and now < expires,
+                   "Transfer URLs are expired or their time window is invalid.")
+              urls = value.get("urls")
+              need(isinstance(urls, dict) and set(urls) == set(contract["platforms"]), "Require both artifact URLs.")
+              for url in urls.values():
+                  storage_url(url)
+              return value
+          
+          
+          class Network:
+              def __init__(self, token, deadline):
+                  self.token = token
+                  self.deadline = deadline
+                  self.opener = build_opener(NoRedirect())
+          
+              def remaining(self):
+                  left = self.deadline - time.monotonic()
+                  need(left > 0, "Cloud transfer exceeded its total time limit.")
+                  return min(30, left)
+          
+              def open(self, url, *, method="GET", data=None, headers=None, auth=False):
+                  if auth:
+                      parts = urlsplit(url)
+                      need(parts.scheme == "https" and parts.hostname in {"api.github.com", "uploads.github.com"}
+                           and parts.port in (None, 443) and not parts.username and not parts.password
+                           and not parts.fragment, "Authentication destination refused.")
+                  else:
+                      storage_url(url)
+                  fields = {"User-Agent": "Otomasi-one-use-draft-transfer"}
+                  fields.update(headers or {})
+                  if auth:
+                      fields.update({"Authorization": "Bearer " + self.token,
+                                     "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10"})
+                  request = Request(url, data=data, method=method, headers=fields)
+                  try:
+                      return self.opener.open(request, timeout=self.remaining())
+                  except HTTPError as exc:
+                      return exc
+                  except (OSError, URLError):
+                      raise TransferError("Cloud connection failed; credentials and URL details suppressed.") from None
+          
+              def json(self, url):
+                  need(url.startswith(API + "/"), "Unexpected release API path.")
+                  with self.open(url, auth=True) as response:
+                      need(response.code == 200, f"Release metadata HTTP {response.code}.")
+                      raw = response.read(MAX_JSON + 1)
+                  need(len(raw) <= MAX_JSON, "Release metadata exceeded the size limit.")
+                  return json.loads(raw)
+          
+              def download_response(self, url):
+                  for _ in range(5):
+                      response = self.open(url)
+                      if response.code in {301, 302, 303, 307, 308}:
+                          with response:
+                              url = storage_url(urljoin(url, response.headers.get("Location", "")))
+                          continue
+                      return response
+                  raise TransferError("Artifact storage redirected too many times.")
+          
+              def upload(self, draft_id, path, expected):
+                  sent = 0
+                  checksum = hashlib.sha256()
+                  last = time.monotonic()
+                  def chunks():
+                      nonlocal sent, last
+                      with path.open("rb") as stream:
+                          while True:
+                              self.remaining()
+                              chunk = stream.read(BLOCK)
+                              if not chunk:
+                                  break
+                              need(sent + len(chunk) <= expected["size"], "ZIP grew while uploading.")
+                              checksum.update(chunk)
+                              yield chunk
+                              sent += len(chunk)
+                              self.remaining()
+                              now = time.monotonic()
+                              if sent == len(chunk) or now - last >= 5:
+                                  emit("upload_progress", asset=expected["name"], bytes_sent=sent, total=expected["size"])
+                                  last = now
+                      need(sent == expected["size"] and checksum.hexdigest() == expected["sha256"],
+                           "ZIP changed during cloud upload.")
+                  url = UPLOAD + f"/releases/{draft_id}/assets?name=" + quote(expected["name"], safe="")
+                  headers = {"Content-Length": str(expected["size"]), "Content-Type": "application/zip"}
+                  with self.open(url, method="POST", data=chunks(), headers=headers, auth=True) as response:
+                      need(response.code == 201, f"Draft asset upload HTTP {response.code}; no retry or deletion performed.")
+                      need(sent == expected["size"], "Upload ended before every package byte was sent.")
+                      raw = response.read(MAX_JSON + 1)
+                  need(len(raw) <= MAX_JSON, "Upload response exceeds the size limit.")
+                  item = json.loads(raw)
+                  check_assets([item], {expected["name"]: expected}, complete=True)
+                  return item
+          
+          
+          def sha_file(path):
+              checksum = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(BLOCK), b""):
+                      checksum.update(chunk)
+              return checksum.hexdigest()
+          
+          
+          def download_package(platform, expected, url, folder, network, contract):
+              outer = folder / (platform + "-artifact.zip")
+              count = 0
+              checksum = hashlib.sha256()
+              with network.download_response(url) as response:
+                  need(response.code == 200, f"Artifact storage HTTP {response.code}; refresh URLs before redispatch.")
+                  reader = getattr(response, "read1", None)
+                  need(callable(reader), "Artifact response does not support bounded reads.")
+                  with outer.open("xb") as output:
+                      while True:
+                          network.remaining()
+                          chunk = reader(BLOCK)
+                          network.remaining()
+                          if not chunk:
+                              break
+                          count += len(chunk)
+                          need(count <= expected["artifact_size"], "Artifact exceeds its expected size.")
+                          checksum.update(chunk)
+                          output.write(chunk)
+              need(count == expected["artifact_size"] and checksum.hexdigest() == expected["artifact_sha256"],
+                   "Artifact SHA-256 or size mismatch.")
+              metadata_name = platform + ".json"
+              with zipfile.ZipFile(outer) as archive:
+                  names = [entry.filename for entry in archive.infolist()]
+                  need(len(names) == 2 and set(names) == {metadata_name, expected["name"]}, "Unexpected artifact contents.")
+                  for entry in archive.infolist():
+                      need(not entry.is_dir() and not entry.flag_bits & 1
+                           and not stat.S_ISLNK(entry.external_attr >> 16), "Artifact member type refused.")
+                  meta_info = archive.getinfo(metadata_name)
+                  need(meta_info.file_size <= MAX_JSON, "Package metadata exceeds size limit.")
+                  metadata_raw = archive.read(metadata_name)
+                  need(hashlib.sha256(metadata_raw).hexdigest() == expected["metadata_sha256"], "Package metadata differs from local QA.")
+                  metadata = json.loads(metadata_raw)
+                  need(metadata.get("schema") == 1 and metadata.get("app_name") == "Otomasi"
+                       and metadata.get("platform") == platform and metadata.get("version") == contract["version"]
+                       and metadata.get("revision") == contract["revision"]
+                       and metadata.get("filename") == expected["name"]
+                       and metadata.get("sha256") == expected["sha256"] and metadata.get("size") == expected["size"],
+                       "Package does not match the reviewed native build.")
+                  inner = archive.getinfo(expected["name"])
+                  need(inner.file_size == expected["size"], "Inner ZIP size differs from the signed manifest.")
+                  path = folder / expected["name"]
+                  checksum = hashlib.sha256()
+                  with archive.open(inner) as source, path.open("xb") as output:
+                      while True:
+                          network.remaining()
+                          chunk = source.read(BLOCK)
+                          if not chunk:
+                              break
+                          checksum.update(chunk)
+                          output.write(chunk)
+              need(path.stat().st_size == expected["size"] and checksum.hexdigest() == expected["sha256"],
+                   "Inner ZIP differs from the locally signed manifest.")
+              emit("package_verified", platform=platform, bytes=expected["size"], sha256=expected["sha256"])
+              return path
+          
+          
+          def check_release(release, contract):
+              marker = f"Verified build: syauqy-ey/otomasi-desktop run {contract['source_run']}; source {contract['revision']}."
+              need(release.get("id") == contract["draft_id"] and release.get("draft") is True
+                   and release.get("prerelease") is False and release.get("tag_name") == "v" + contract["version"]
+                   and release.get("url") == API + "/releases/" + str(contract["draft_id"])
+                   and str(release.get("body", "")).endswith(marker), "The existing verified draft changed.")
+          
+          
+          def check_assets(rows, desired, *, complete):
+              found = {}
+              need(isinstance(rows, list), "Unexpected asset list.")
+              for row in rows:
+                  name = row.get("name")
+                  need(name in desired and name not in found, "Unexpected or duplicate draft asset.")
+                  expected = desired[name]
+                  need(row.get("state") == "uploaded" and row.get("size") == expected["size"]
+                       and row.get("digest") == "sha256:" + expected["sha256"], "Existing draft asset is incomplete or has a different hash.")
+                  found[name] = row
+              if complete:
+                  need(set(found) == set(desired), "The draft is missing a verified asset.")
+              return found
+          
+          
+          def transfer(secret, nonce, network, folder, contract=CONTRACT):
+              value = validate_secret(secret, nonce, contract)
+              # Start both short-lived storage requests before any API lookup or setup.
+              with ThreadPoolExecutor(max_workers=2) as executor:
+                  pending = {platform: executor.submit(download_package, platform, expected, value["urls"][platform],
+                                                       folder, network, contract)
+                             for platform, expected in contract["platforms"].items()}
+                  paths = {platform: task.result() for platform, task in pending.items()}
+              desired = {item["name"]: item for item in contract["platforms"].values()}
+              desired[contract["manifest"]["name"]] = contract["manifest"]
+              draft_url = API + "/releases/" + str(contract["draft_id"])
+              assets_url = draft_url + "/assets?per_page=100"
+              check_release(network.json(draft_url), contract)
+              existing = check_assets(network.json(assets_url), desired, complete=False)
+              need("latest.json" in existing, "The locally signed latest.json must already be verified in the draft.")
+              for platform, expected in contract["platforms"].items():
+                  check_release(network.json(draft_url), contract)
+                  existing = check_assets(network.json(assets_url), desired, complete=False)
+                  if expected["name"] not in existing:
+                      network.upload(contract["draft_id"], paths[platform], expected)
+              check_release(network.json(draft_url), contract)
+              check_assets(network.json(assets_url), desired, complete=True)
+              emit("draft_assets_verified", draft_id=contract["draft_id"], version=contract["version"],
+                   source_revision=contract["revision"], published=False)
+          
+          
+          def main():
+              try:
+                  need(os.environ.get("GITHUB_REPOSITORY") == CONTRACT["repository"]
+                       and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                       and os.environ.get("GITHUB_REF") == "refs/heads/main", "This one-use job has the wrong repository/event/ref.")
+                  secret = os.environ.pop("OTOMASI_TRANSFER", "")
+                  nonce = os.environ.get("TRANSFER_NONCE", "")
+                  token = os.environ.pop("GH_TOKEN", "")
+                  need(token and secret, "Required short-lived transfer secret or repository token is missing.")
+                  network = Network(token, time.monotonic() + TOTAL_TIMEOUT)
+                  with tempfile.TemporaryDirectory(prefix="otomasi-draft-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+                      transfer(secret, nonce, network, Path(temporary))
+                  return 0
+              except TransferError as exc:
+                  emit("failed", reason=str(exc), published=False)
+              except Exception as exc:
+                  # Exceptions from HTTP/ZIP/JSON may contain signed URLs; suppress details.
+                  emit("failed", reason="Transfer failed: " + type(exc).__name__, published=False)
+              return 1
+          
+          
+          if __name__ == "__main__":
+              raise SystemExit(main())
