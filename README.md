@@ -14,6 +14,15 @@ Unduh ZIP Mac, ekstrak `Otomasi.app`, lalu pindahkan ke `~/Applications` dan buk
 
 Paket Mac belum ditandatangani dengan Apple Developer ID atau dinotariskan. Jika macOS meminta verifikasi saat pertama dibuka, ikuti [panduan resmi Apple](https://support.apple.com/en-au/102445) untuk aplikasi yang Anda percaya.
 
+## Cek PTP berdasarkan Activity Type
+
+Mulai versi 2.3.0, gunakan satu menu **Cek PTP 5G + BC**. Pilih `dataptp.xlsx` dengan kolom **Activity Type**:
+
+- `PTP 5G Clock` memakai aturan pemeriksaan 5G.
+- `PTP BC Enablement` memakai aturan pemeriksaan BC.
+
+Klik **Periksa Input** untuk melihat jumlah masing-masing jenis, lalu **Tes SSH** dan jalankan pemeriksaan. Activity Type kosong atau tidak dikenal dilaporkan bersama nomor baris sebelum koneksi dimulai. Hasil hanya `ptp_result.xlsx` langsung di folder pilihan, mengikuti urutan input dan menyertakan Activity Type pada kolom V. Generator BC dan 5G tetap terpisah.
+
 ## Pembaruan
 
 Aplikasi memeriksa rilis baru dan menyediakan tombol **Cek pembaruan** / **Update**. Satu rilis memuat paket Windows dan Mac dari revisi source yang sama. Aplikasi memilih paket yang sesuai dan memeriksa tanda tangan, ukuran, serta checksum sebelum memasang. Mulai versi 2.2.1, unduhan yang sudah siap membiarkan aplikasi tetap terbuka dan bisa digunakan. Selesaikan pekerjaan lalu tutup Automation sendiri untuk memasang update. Setelah pemasangan berhasil atau versi lama dipulihkan, aplikasi tetap tertutup sampai Anda membukanya sendiri.
@@ -23,3 +32,5 @@ Untuk beralih dari versi 2.2.0 tanpa penutupan/pembukaan otomatis oleh updater l
 Input, folder hasil, pengaturan, dan koneksi VPN tetap dipilih pada masing-masing komputer. Siapkan VPN sebelum pemeriksaan SSH.
 
 Repository ini hanya berisi unduhan publik dan manifest pembaruan. Source aplikasi disimpan dalam repository private yang terpisah.
+
+Versi 2.3.1 memakai menu Generate BC Enablement, Generate 5G Clock, dan Generate ServisProv serta logo A emas untuk Automation di Windows dan Mac.
