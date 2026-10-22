@@ -34,3 +34,5 @@ Input, folder hasil, pengaturan, dan koneksi VPN tetap dipilih pada masing-masin
 Repository ini hanya berisi unduhan publik dan manifest pembaruan. Source aplikasi disimpan dalam repository private yang terpisah.
 
 Versi 2.3.1 memakai menu Generate BC Enablement, Generate 5G Clock, dan Generate ServisProv serta logo A emas untuk Automation di Windows dan Mac.
+
+Versi 2.3.2 memperbaiki pembacaan lampiran log lengkap pada Generate BC Enablement dan Generate 5G Clock. File HOSTNAME_IP yang cocok langsung digunakan bila log hostname khusus tidak tersedia atau kosong. Hasil Log PTP tidak perlu digandakan atau diganti namanya; log IP lain tidak dipakai.
